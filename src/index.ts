@@ -24,10 +24,28 @@ const height = 525;
 
 const FORGE_URL = 'http://192.168.0.118:7860';
 
+const cleardat = async (imagestr:string) => {
+  const response:any = await axios.post(`${FORGE_URL}/rembg`, {
+    "input_image": imagestr,
+    "model": "isnet-general-use",
+    "return_mask": false,
+    "alpha_matting": false,
+    "alpha_matting_foreground_threshold": 240,
+    "alpha_matting_background_threshold": 10,
+    "alpha_matting_erode_size": 10    
+  });
+  const { data } = response;
+  return data;
+  // const buf = Buffer.from(data.image, 'base64');
+  // return buf;
+  // fs.writeFileSync(`images/${folder}/image-bgrm-${seed}-${i}-${Date.now()}.png`, buf);
+}
+
 const i2i = async (i:number, imgstring: string, folder: string, seed:number, prompt:string) => {
   const response:any = await axios.post( 'http://192.168.0.118:7860/sdapi/v1/img2img', {
-      prompt: `cartoon, sin city art style`,
-      denoising_strength: 0.75,
+      // prompt: `cartoon rendering of the following: "${prompt}" cartoon, western comic art style`,
+      prompt: 'cartoon, manga style, thick lines',
+      denoising_strength: 0.7,
       sampler_name: "Euler",
       steps: 15,
       cfg_scale: 1.5,
@@ -50,23 +68,29 @@ const i2i = async (i:number, imgstring: string, folder: string, seed:number, pro
   // const nextSeed = Math.random() < 0.1 ? seed + 1 : seed;
 
   const nextSeed = seed + 1;
-  return data.images[0];
+  const cleardata = await cleardat(data.images[0]);
+  
+  return cleardata.image;
+  // return data.images[0];
 
   // i2i(i + 1, data.images[0], folder, nextSeed);
 }
 
 const bgrm = async (i:number, imgstring:string, folder:string, seed:number, prompt:string) => {
-  const response:any = await axios.post(`${FORGE_URL}/rembg`, {
-    "input_image": imgstring,
-    "model": "isnet-general-use",
-    "return_mask": false,
-    "alpha_matting": false,
-    "alpha_matting_foreground_threshold": 240,
-    "alpha_matting_background_threshold": 10,
-    "alpha_matting_erode_size": 10    
-  });
-  const { data } = response;
+  // const response:any = await axios.post(`${FORGE_URL}/rembg`, {
+  //   "input_image": imgstring,
+  //   "model": "isnet-general-use",
+  //   "return_mask": false,
+  //   "alpha_matting": false,
+  //   "alpha_matting_foreground_threshold": 240,
+  //   "alpha_matting_background_threshold": 10,
+  //   "alpha_matting_erode_size": 10    
+  // });
+  // const { data } = response;
+  const data = await cleardat(imgstring);
   const buf = Buffer.from(data.image, 'base64');
+
+  // const buf = await cleardat(imgstring);
   fs.writeFileSync(`images/${folder}/image-bgrm-${seed}-${i}-${Date.now()}.png`, buf);
 
   const cartoon = await i2i(i, data.image, folder, seed, prompt);
@@ -144,8 +168,15 @@ app.get('/', async (req, res) => {
 
     res.send(`<div style="background-color: green; padding: 20px"><img src="data:image/png;base64,${image}" />
       <img src="data:image/png;base64,${removed}" />
+      <img style="position:absolute; top: 25px; left: 25px;" onclick="whoop(event)" src="data:image/png;base64,${cartoon}" />
       <img src="data:image/png;base64,${cartoon}" />
-
+      <script>
+      function whoop(evt) {
+        const { opacity } = event.target.style;
+        console.log(0, opacity);
+        event.target.style.opacity = opacity === '0' ? 1 : 0;
+      }
+      </script>
       </div>`);
 
 //    res.json({ img })
