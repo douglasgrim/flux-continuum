@@ -1,6 +1,7 @@
 import express from 'express';
 import axios from 'axios';
 import fs from 'fs';
+import { kebabCase } from 'lodash';
 
 const app = express();
 
@@ -14,21 +15,25 @@ const app = express();
 
 //const PROMPT = '(space opera science fiction style:1.3) street scene photo of a (futuristic high tech kitchen:1.1), afternoon, sunny. (intricate sharp details:1.5), ultra high res, vibrant colors';
 
-const PROMPT = 'Montana Rangeland, summer, evening, award-winning Nat-Geo photograph, masterpiece, dynamic play of light, high blacks, rich colors, 35mm photograph, Kodachrome'
+// const PROMPT = 'Montana Rangeland, summer, evening, award-winning Nat-Geo photograph, masterpiece, dynamic play of light, high blacks, rich colors, 35mm photograph, Kodachrome'
 
-const width = 768;
-const height = 512;
+const PROMPT = 'a cute cartoon puppy in a 2d isometric video game';
 
-const i2i = async (i:number, imgstring: string, folder: string, seed:number) => {
+const width = 750;
+const height = 525;
+
+const FORGE_URL = 'http://192.168.0.118:7860';
+
+const i2i = async (i:number, imgstring: string, folder: string, seed:number, prompt:string) => {
   const response:any = await axios.post( 'http://192.168.0.118:7860/sdapi/v1/img2img', {
-      prompt: 'high quality, beautiful photo',
-      denoising_strength: 0.25,
+      prompt: `cartoon, sin city art style`,
+      denoising_strength: 0.75,
       sampler_name: "Euler",
       steps: 15,
-      cfg_scale: 2,
+      cfg_scale: 1.5,
       height,
       width,
-      distilled_cfg_scale: 2,
+      distilled_cfg_scale: 3.5,
       scheduler: 'simple',
       seed,
       init_images: [imgstring]
@@ -38,23 +43,49 @@ const i2i = async (i:number, imgstring: string, folder: string, seed:number) => 
 
   for await(const img of data.images) {
     const buf = Buffer.from(img, 'base64');
-    fs.writeFileSync(`images/${folder}/image-${i}-${Date.now()}.png`, buf);
+    fs.writeFileSync(`images/${folder}/image-iter-${seed}-${i}-${Date.now()}.png`, buf);
+//    fs.writeFileSync(`images/${folder}/image-${i}-${Date.now()}.png`, buf);
   }
 
   // const nextSeed = Math.random() < 0.1 ? seed + 1 : seed;
 
   const nextSeed = seed + 1;
+  return data.images[0];
 
-  i2i(i + 1, data.images[0], folder, nextSeed);
+  // i2i(i + 1, data.images[0], folder, nextSeed);
 }
 
-const go = async (i:number, folder:string) => {
+const bgrm = async (i:number, imgstring:string, folder:string, seed:number, prompt:string) => {
+  const response:any = await axios.post(`${FORGE_URL}/rembg`, {
+    "input_image": imgstring,
+    "model": "isnet-general-use",
+    "return_mask": false,
+    "alpha_matting": false,
+    "alpha_matting_foreground_threshold": 240,
+    "alpha_matting_background_threshold": 10,
+    "alpha_matting_erode_size": 10    
+  });
+  const { data } = response;
+  const buf = Buffer.from(data.image, 'base64');
+  fs.writeFileSync(`images/${folder}/image-bgrm-${seed}-${i}-${Date.now()}.png`, buf);
+
+  const cartoon = await i2i(i, data.image, folder, seed, prompt);
+
+  return {
+    cartoon,
+    removed: data.image,
+  }
+  // return data.image;
+}
+
+const go = async (i:number, folder:string, prompt:string) => {
   const seed = Math.floor(Math.random() * 999999999999)
   const response:any = await axios.post( 'http://192.168.0.118:7860/sdapi/v1/txt2img', {
-      prompt: PROMPT,
+      prompt,
       sampler_name: "Euler",
       steps: 15,
-      cfg_scale: 1.5,
+      cfg_scale: 1,
+      distilled_cfg_scale: 3.5,
       height,
       width,
       scheduler: 'simple',
@@ -65,10 +96,16 @@ const go = async (i:number, folder:string) => {
 
   for await(const img of data.images) {
     const buf = Buffer.from(img, 'base64');
-    fs.writeFileSync(`images/${folder}/image-${i}-${Date.now()}.png`, buf);
+    fs.writeFileSync(`images/${folder}/image-${i}-${seed}-${Date.now()}.png`, buf);
   }
 
-  i2i(i + 1, data.images[0], folder, seed);
+  // i2i(i + 1, data.images[0], folder, seed);
+  const { removed, cartoon } = await bgrm(i, data.images[0], folder, seed, prompt);
+  return {
+    removed,
+    image: data.images[0],
+    cartoon,
+  }
 
 }
 
@@ -94,11 +131,29 @@ app.get('/', async (req, res) => {
   //   const buf = Buffer.from(img, 'base64');
   //   fs.writeFileSync(`image-${Date.now()}.png`, buf);
   // }
+  try {
+    const prompt:string = req.query.prompt as string;
+    const folder = kebabCase(prompt);
+    try {
+      fs.mkdirSync(`images/${folder}`);
+    } catch (err) {
 
-  const folder = String(Date.now());
-  fs.mkdirSync(`images/${folder}`);
-  go(1, folder);
-  res.json({ data: 'ok' })
+    }
+    const { image, removed, cartoon } = await go(1, folder, prompt);
+    //res.send('ok')
+
+    res.send(`<div style="background-color: green; padding: 20px"><img src="data:image/png;base64,${image}" />
+      <img src="data:image/png;base64,${removed}" />
+      <img src="data:image/png;base64,${cartoon}" />
+
+      </div>`);
+
+//    res.json({ img })
+      
+  } catch (err) {
+    res.send(`<h1>bad bad bad</h1>`);
+  }
+
 
   // result.images.forEach((img:string, i:number) => {
 
